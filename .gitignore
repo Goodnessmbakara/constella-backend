@@ -22,3 +22,27 @@ archive.zip
 **/.DS_Store
 .python-version
 .venv
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+
+# Firebase and Google Cloud credentials
+firebase.json
+admin_sdk.json
+service-account-key.json
+*.json.key
+
+# API keys and credentials
+readme.txt
+keys/
+certs/
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
