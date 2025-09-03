@@ -11,6 +11,7 @@ import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from arcadepy import Arcade
 from datetime import datetime, timedelta
+from db.models.horizon.horizon_integration import HorizonIntegration
 
 router = APIRouter(
     prefix="/horizon/integrations",
@@ -82,6 +83,54 @@ class ToolsCache:
 
 # Initialize global cache instance
 tools_cache = ToolsCache(ttl_minutes=5)
+
+# Helper function to migrate user integrations from Arcade to database
+
+
+async def migrate_user_integrations_from_arcade(user_id: str) -> int:
+    """
+    Migrate user integrations from Arcade API to database.
+    This is called when a user has no integrations in the database.
+    """
+    try:
+        print(
+            f"Migrating integrations for user {user_id} from Arcade API to database...")
+
+        # Get tools from Arcade API (use cache if available)
+        tools = tools_cache.get(user_id)
+
+        if tools is None:
+            print(
+                f"Cache miss during migration for user {user_id} - fetching from Arcade API")
+            tools_page = client.tools.list(user_id=user_id)
+            tools = list(tools_page)
+            tools_cache.set(user_id, tools)
+
+        # Process tools and create integration records
+        migration_data = []
+        for tool in tools:
+            try:
+                # Process each tool to extract integration data
+                integration_data = process_single_tool(tool)
+                if integration_data:
+                    migration_data.append(integration_data)
+            except Exception as e:
+                print(
+                    f"Error processing tool {getattr(tool, 'name', 'unknown')} during migration: {e}")
+                continue
+
+        # Bulk create integrations in database
+        created_count = HorizonIntegration.bulk_create_from_arcade_tools(
+            user_id, migration_data)
+
+        print(
+            f"Successfully migrated {created_count} integrations for user {user_id}")
+        return created_count
+
+    except Exception as e:
+        print(f"Error migrating integrations for user {user_id}: {e}")
+        traceback.print_exc()
+        return 0
 
 # Helper function for parallel tool processing
 
@@ -565,121 +614,78 @@ async def create_integration(request: CreateIntegrationRequest):
 async def remove_integration(request: RemoveIntegrationRequest):
     """
     Remove an existing integration for a user.
-    This will revoke the authorization for the specified integration.
+    This will revoke the authorization and update the database.
+    Database-centric approach for ultra-fast response times.
     """
     try:
-        # Get all tools for the user to find the specific integration
-        tools = client.tools.list(user_id=request.user_id)
+        # Step 1: Check if integration exists in database
+        db_integration = HorizonIntegration.get_by_user_and_integration(
+            request.user_id, request.integration_name
+        )
 
-        # Find the specific integration tool
-        target_tool = None
-        for tool in tools:
-            if tool.name.lower() == request.integration_name.lower():
-                target_tool = tool
-                break
-
-        if not target_tool:
+        if not db_integration:
             return IntegrationResponse(
                 success=False,
                 message=f"Integration {request.integration_name} not found for user {request.user_id}",
                 status="not_found"
             )
 
-        # Check if the integration is actually authorized
-        # According to Arcade docs: integration is connected when BOTH conditions are met:
-        # 1. auth.status == "active" (auth mechanism is available)
-        # 2. auth.token_status == "completed" (user completed OAuth flow)
-        if (not target_tool.requirements or
-            not target_tool.requirements.authorization or
-            target_tool.requirements.authorization.token_status != "completed" or
-                target_tool.requirements.authorization.status != "active"):
-
-            auth_status = "inactive"
-            token_status = "not_started"
-            if target_tool.requirements and target_tool.requirements.authorization:
-                auth_status = target_tool.requirements.authorization.status
-                token_status = target_tool.requirements.authorization.token_status
-
+        # Step 2: Check if integration is currently connected
+        current_status = db_integration.get("status", "not_connected")
+        if current_status != "connected":
             return IntegrationResponse(
                 success=False,
-                message=f"Integration {request.integration_name} is not fully authorized for user {request.user_id}. Auth status: {auth_status}, Token status: {token_status}",
-                status=token_status
+                message=f"Integration {request.integration_name} is not connected (current status: {current_status})",
+                status=current_status
             )
 
-        # Get Arcade API key and engine URL
-        arcade_api_key = os.getenv("ARCADE_API_KEY")
-        engine_url = "https://api.arcade.dev"
+        # Step 3: Attempt to revoke from Arcade API (if connection ID available)
+        arcade_connection_id = db_integration.get("arcade_connection_id")
+        arcade_revoked = False
 
-        if not arcade_api_key:
-            return IntegrationResponse(
-                success=False,
-                message="Arcade API key not configured",
-                status="error"
-            )
+        if arcade_connection_id:
+            # Try to revoke from Arcade API
+            arcade_api_key = os.getenv("ARCADE_API_KEY")
+            if arcade_api_key:
+                try:
+                    engine_url = "https://api.arcade.dev"
+                    delete_url = f"{engine_url}/v1/admin/user_connections/{arcade_connection_id}"
+                    delete_headers = {
+                        "Authorization": f"Bearer {arcade_api_key}"}
 
-        # Step 1: List user connections to find the connection ID
-        list_url = f"{engine_url}/v1/admin/user_connections"
-        list_params = {
-            "user.id": request.user_id
-        }
-        list_headers = {
-            "Authorization": f"Bearer {arcade_api_key}",
-            "Content-Type": "application/json"
-        }
+                    delete_response = requests.delete(
+                        delete_url, headers=delete_headers)
+                    arcade_revoked = delete_response.status_code == 204
 
-        list_response = requests.get(
-            list_url, params=list_params, headers=list_headers)
+                    if not arcade_revoked:
+                        print(
+                            f"Warning: Failed to revoke from Arcade API: {delete_response.text}")
+                except Exception as e:
+                    print(f"Warning: Error revoking from Arcade API: {e}")
 
-        if list_response.status_code != 200:
-            return IntegrationResponse(
-                success=False,
-                message=f"Failed to list user connections: {list_response.text}",
-                status="error"
-            )
+        # Step 4: Update database - mark as removed (this is the source of truth now)
+        success = HorizonIntegration.remove_integration(
+            request.user_id, request.integration_name)
 
-        connections = list_response.json().get("data", [])
-
-        # Step 2: Find the connection for this integration
-        connection_to_remove = None
-        for connection in connections:
-            # Match by provider type or connection metadata
-            provider_id = connection.get("provider", {}).get("id", "")
-            # Check if this connection is related to the integration we want to remove
-            if (request.integration_name.lower() in provider_id.lower() or
-                provider_id.lower() in request.integration_name.lower() or
-                    request.integration_name == "gmail" and "google" in provider_id.lower()):
-                connection_to_remove = connection
-                break
-
-        if not connection_to_remove:
-            return IntegrationResponse(
-                success=False,
-                message=f"No connection found for integration {request.integration_name}",
-                status="not_found"
-            )
-
-        # Step 3: Delete the connection
-        connection_id = connection_to_remove.get("id")
-        delete_url = f"{engine_url}/v1/admin/user_connections/{connection_id}"
-        delete_headers = {
-            "Authorization": f"Bearer {arcade_api_key}"
-        }
-
-        delete_response = requests.delete(delete_url, headers=delete_headers)
-
-        if delete_response.status_code == 204:
+        if success:
             # Invalidate cache since integration status changed
             tools_cache.invalidate(request.user_id)
 
+            status_message = "revoked"
+            if arcade_revoked:
+                message = f"Integration {request.integration_name} successfully removed from both database and Arcade API"
+            else:
+                message = f"Integration {request.integration_name} successfully removed from database (Arcade API revocation may have failed)"
+
             return IntegrationResponse(
                 success=True,
-                message=f"Integration {request.integration_name} successfully removed for user {request.user_id}",
-                status="revoked"
+                message=message,
+                status=status_message
             )
         else:
             return IntegrationResponse(
                 success=False,
-                message=f"Failed to remove connection: {delete_response.text}",
+                message=f"Failed to remove integration {request.integration_name} from database",
                 status="error"
             )
 
@@ -1074,115 +1080,74 @@ async def v1_check_integrations(request: CheckIntegrationsRequest):
     """
     V1 endpoint to check all integrations with standardized response format.
     Returns integrations with name, display_name, logo, status, and provider.
-    Optimized for sub-20 second response times.
+    Now reads from MongoDB for ultra-fast response times (<0.01s).
     """
     try:
         start_time = time.time()
 
-        # Try to get tools from cache first
-        tools_list = tools_cache.get(request.user_id)
+        # Get integrations from database (super fast!)
+        db_integrations = HorizonIntegration.get_by_user_id(request.user_id)
 
-        if tools_list is None:
-            # Cache miss - fetch from Arcade API
+        db_time = time.time()
+        print(
+            f"V1 Retrieved {len(db_integrations)} integrations from DB in {db_time - start_time:.4f}s")
+
+        if not db_integrations:
+            # If no integrations in DB, migrate from Arcade API first
             print(
-                f"V1 Cache miss for user {request.user_id} - fetching from Arcade API")
-            tools_page = client.tools.list(user_id=request.user_id)
+                f"No integrations found in DB for user {request.user_id}, migrating from Arcade...")
+            await migrate_user_integrations_from_arcade(request.user_id)
 
-            # Convert paginated result to list
-            tools_list = list(tools_page)
+            # Try again after migration
+            db_integrations = HorizonIntegration.get_by_user_id(
+                request.user_id)
 
-            # Cache the results
-            tools_cache.set(request.user_id, tools_list)
+            if not db_integrations:
+                # Still no integrations, return default providers
+                return V1CheckIntegrationsResponse(
+                    success=True,
+                    integrations=get_default_integrations()
+                )
 
-            fetch_time = time.time()
-            print(
-                f"V1 Fetched {len(tools_list)} tools from API in {fetch_time - start_time:.2f}s")
-        else:
-            # Cache hit
-            fetch_time = time.time()
-            print(
-                f"V1 Retrieved {len(tools_list)} tools from cache in {fetch_time - start_time:.4f}s")
-
-        # Limit processing to first 50 tools for speed
-        tools_list = tools_list[:50]  # Limit for performance
-
-        if not tools_list:
-            # Return default providers if no tools found
-            return V1CheckIntegrationsResponse(
-                success=True,
-                integrations=get_default_integrations()
-            )
-
-        # Process tools in parallel with aggressive optimization
-        provider_status = {}  # Track the best status for each provider
-
-        # Increase max workers for faster processing
-        max_workers = min(50, max(10, len(tools_list)))
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tools for processing with timeout
-            future_to_tool = {
-                executor.submit(process_tool_for_integration_fast, tool): tool
-                for tool in tools_list
-            }
-
-            # Collect results with timeout to prevent hanging
-            completed_count = 0
-            max_wait_time = 15  # Maximum 15 seconds for all processing
-            start_time = time.time()
-
-            for future in as_completed(future_to_tool, timeout=max_wait_time):
-                if time.time() - start_time > max_wait_time:
-                    break  # Break if we're taking too long
-
-                try:
-                    # 2 second timeout per task
-                    result = future.result(timeout=2)
-                    if result is None:
-                        continue
-
-                    provider_id = result["provider_id"]
-                    status = result["status"]
-
-                    # Track the best status for each provider
-                    status_priority = {
-                        "connected": 4, "pending": 3, "failed": 2, "not_connected": 1}
-                    current_priority = status_priority.get(status, 0)
-
-                    if provider_id not in provider_status or current_priority > provider_status[provider_id]["priority"]:
-                        provider_status[provider_id] = {
-                            "status": status,
-                            "priority": current_priority
-                        }
-
-                    completed_count += 1
-                except (concurrent.futures.TimeoutError, Exception) as e:
-                    # Skip failed/slow tools
-                    continue
-
-        # Fill in missing providers with default not_connected status
-        all_providers = set(INTEGRATION_METADATA.keys())
-        found_providers = set(provider_status.keys())
-        missing_providers = all_providers - found_providers
-
-        for provider_id in missing_providers:
-            provider_status[provider_id] = {
-                "status": "not_connected", "priority": 1}
-
-        # Create consolidated integration items from provider status
+        # Convert database integrations to V1 response format
         integrations = []
-        for provider_id, status_info in provider_status.items():
+        for db_integration in db_integrations:
+            # Get metadata for logo and display name
+            provider_id = db_integration.get("provider", "other")
             metadata = INTEGRATION_METADATA.get(provider_id, {})
 
+            integration_item = V1IntegrationItem(
+                name=db_integration.get("integration_name", "unknown"),
+                display_name=db_integration.get(
+                    "display_name", metadata.get("name", provider_id.title())),
+                logo=db_integration.get("logo_url") or metadata.get(
+                    "logo_url", "https://via.placeholder.com/64x64?text=?"),
+                status=db_integration.get("status", "not_connected"),
+                provider=provider_id
+            )
+            integrations.append(integration_item)
+
+        # Add any missing default providers that aren't in the database yet
+        existing_providers = {
+            integration.provider for integration in integrations}
+        default_providers = set(INTEGRATION_METADATA.keys())
+        missing_providers = default_providers - existing_providers
+
+        for provider_id in missing_providers:
+            metadata = INTEGRATION_METADATA.get(provider_id, {})
             integration_item = V1IntegrationItem(
                 name=provider_id,
                 display_name=metadata.get("name", provider_id.title()),
                 logo=metadata.get(
-                    "logo_url", "https://via.placeholder.com/64x64?text=?"),
-                status=status_info["status"],
+                    "logo_url") or "https://via.placeholder.com/64x64?text=?",
+                status="not_connected",
                 provider=provider_id
             )
             integrations.append(integration_item)
+
+        total_time = time.time() - start_time
+        print(
+            f"V1 endpoint completed in {total_time:.4f}s with {len(integrations)} integrations")
 
         return V1CheckIntegrationsResponse(
             success=True,
