@@ -27,6 +27,8 @@ archive.zip
 .env
 .env.local
 .env.*.local
+.env.backup*
+.env.fixed
 
 # Firebase and Google Cloud credentials
 firebase.json

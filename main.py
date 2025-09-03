@@ -66,6 +66,7 @@ if not is_scheduler:
     from routers.horizon.meetings import router as horizonMeetingsRouter
     from routers.horizon.integrations import router as horizonIntegrationsRouter
     from routers.horizon.autoloop import router as horizonAutoloopRouter
+    from routers.horizon.auth import router as horizonAuthRouter
 
     # Aury routers
     from routers.aury.analysis import router as auryAnalysisRouter
@@ -187,6 +188,7 @@ if not is_scheduler:
     app.include_router(horizonMeetingsRouter)
     app.include_router(horizonIntegrationsRouter)
     app.include_router(horizonAutoloopRouter)
+    app.include_router(horizonAuthRouter)
 
     # Aury routers
     app.include_router(auryAnalysisRouter)
