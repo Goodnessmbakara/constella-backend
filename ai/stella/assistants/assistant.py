@@ -1,9 +1,9 @@
 from ai.openai_setup import openai_client
 from ai.stella.assistants.tools.tools import (converse_with_user_tool, create_connection_tool,
-	create_note_tool, delete_connection_tool, delete_note_tool, edit_note_title_tool,
-	delete_part_of_note_content_tool, replace_part_of_note_content_tool,
-	add_part_to_note_content_tool, get_website_url_content_tool, google_search_tool,
-	similarity_search_user_notes_tool)
+                                              create_note_tool, delete_connection_tool, delete_note_tool, edit_note_title_tool,
+                                              delete_part_of_note_content_tool, replace_part_of_note_content_tool,
+                                              add_part_to_note_content_tool, get_website_url_content_tool, google_search_tool,
+                                              similarity_search_user_notes_tool)
 from pydantic import BaseModel, Field
 
 from typing import List
@@ -113,20 +113,20 @@ assistant_instructions = """
 	Never ask for further details or information. Always perform the action according to what seems the highest probability of success.
 """
 assistant_tools = [
-	similarity_search_user_notes_tool,
-	google_search_tool,
-	get_website_url_content_tool,
-	# Frontend Note Creation Tools
-	create_note_tool,
-	# edit_note_tags_tool,
-	delete_part_of_note_content_tool,
-	replace_part_of_note_content_tool,
-	add_part_to_note_content_tool,
-	delete_note_tool,
-	create_connection_tool,
-	delete_connection_tool,
-	converse_with_user_tool
-	# keyword_search_user_notes_tool
+    similarity_search_user_notes_tool,
+    google_search_tool,
+    get_website_url_content_tool,
+    # Frontend Note Creation Tools
+    create_note_tool,
+    # edit_note_tags_tool,
+    delete_part_of_note_content_tool,
+    replace_part_of_note_content_tool,
+    add_part_to_note_content_tool,
+    delete_note_tool,
+    create_connection_tool,
+    delete_connection_tool,
+    converse_with_user_tool
+    # keyword_search_user_notes_tool
 ]
 
 tool_capabilities_description = """
@@ -138,50 +138,59 @@ tool_capabilities_description = """
 # TODO: add tagging functionality to below after the following changes work
 
 class Tag(BaseModel):
-	uniqueid: str
-	name: str
-	color: str
+    uniqueid: str
+    name: str
+    color: str
+
 
 class NoteCreation(BaseModel):
-	title: str
-	content: str
-	tags: List[Tag] = Field(default_factory=list)
-	done_creating: bool = False
+    title: str
+    content: str
+    tags: List[Tag] = Field(default_factory=list)
+    done_creating: bool = False
+
 
 class NoteDeletion(BaseModel):
-	note_id: str
-	done_deleting: bool = False
+    note_id: str
+    done_deleting: bool = False
+
 
 class NoteEdit(BaseModel):
-	note_id: str
-	title: str
-	content: str
-	tags: List[Tag] = Field(default_factory=list)
-	done_editing: bool = False
+    note_id: str
+    title: str
+    content: str
+    tags: List[Tag] = Field(default_factory=list)
+    done_editing: bool = False
+
 
 class CreateConnection(BaseModel):
-	start_note_id: str
-	end_note_id: str
-	done_creating: bool = False
+    start_note_id: str
+    end_note_id: str
+    done_creating: bool = False
+
+
 class DeleteConnection(BaseModel):
-	start_note_id: str
-	end_note_id: str
-	done_deleting: bool = False
+    start_note_id: str
+    end_note_id: str
+    done_deleting: bool = False
+
 
 class StellaResponseFormat(BaseModel):
-	note_creations: List[NoteCreation] = Field(default_factory=list)
-	note_edits: List[NoteEdit] = Field(default_factory=list)
-	note_deletions: List[NoteDeletion] = Field(default_factory=list)
-	create_connections: List[CreateConnection] = Field(default_factory=list)
-	delete_connections: List[DeleteConnection] = Field(default_factory=list)
-	message: str
+    note_creations: List[NoteCreation] = Field(default_factory=list)
+    note_edits: List[NoteEdit] = Field(default_factory=list)
+    note_deletions: List[NoteDeletion] = Field(default_factory=list)
+    create_connections: List[CreateConnection] = Field(default_factory=list)
+    delete_connections: List[DeleteConnection] = Field(default_factory=list)
+    message: str
 
 
 stella_response_schema = StellaResponseFormat.model_json_schema()
 
-stella_openai_assistant = openai_client.beta.assistants.create(
-	name=assistant_name,
-	instructions=assistant_instructions,
-	tools=assistant_tools,
-	model="gpt-4.1-nano-2025-04-14",
-)
+# Temporarily commented out to allow service startup
+# stella_openai_assistant = openai_client.beta.assistants.create(
+# 	name=assistant_name,
+# 	instructions=assistant_instructions,
+# 	tools=assistant_tools,
+# 	model="gpt-4.1-nano-2025-04-14",
+# )
+stella_openai_assistant = None  # Temporary placeholder

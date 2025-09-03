@@ -4,6 +4,9 @@ import traceback
 from pymongo import MongoClient
 from pymongo.read_preferences import ReadPreference
 from pymongo.errors import ServerSelectionTimeoutError, AutoReconnect, ConnectionFailure
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Get client string from .env file
 connection_string = os.getenv("MONGODB_URI")
