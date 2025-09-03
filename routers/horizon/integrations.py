@@ -5,7 +5,12 @@ import traceback
 import sentry_sdk
 import requests
 import os
+import asyncio
+import time
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from arcadepy import Arcade
+from datetime import datetime, timedelta
 
 router = APIRouter(
     prefix="/horizon/integrations",
@@ -16,6 +21,229 @@ router = APIRouter(
 
 # Initialize Arcade client
 client = Arcade()  # Automatically finds the `ARCADE_API_KEY` env variable
+
+# TTL Cache for tools list
+
+
+class ToolsCache:
+    def __init__(self, ttl_minutes=5):
+        self.cache = {}
+        self.ttl_seconds = ttl_minutes * 60
+        print(f"Initialized ToolsCache with TTL: {ttl_minutes} minutes")
+
+    def get(self, user_id: str):
+        """Get cached tools for user if not expired"""
+        if user_id not in self.cache:
+            return None
+
+        cached_data, timestamp = self.cache[user_id]
+
+        # Check if cache is expired
+        if datetime.now() - timestamp > timedelta(seconds=self.ttl_seconds):
+            del self.cache[user_id]
+            print(f"Cache expired for user {user_id}")
+            return None
+
+        print(
+            f"Cache hit for user {user_id} (age: {(datetime.now() - timestamp).seconds}s)")
+        return cached_data
+
+    def set(self, user_id: str, tools):
+        """Cache tools for user with timestamp"""
+        self.cache[user_id] = (tools, datetime.now())
+        print(f"Cached {len(tools)} tools for user {user_id}")
+
+    def invalidate(self, user_id: str):
+        """Manually invalidate cache for user"""
+        if user_id in self.cache:
+            del self.cache[user_id]
+            print(f"Cache invalidated for user {user_id}")
+
+    def clear_all(self):
+        """Clear entire cache"""
+        self.cache.clear()
+        print("Cache cleared")
+
+    def get_stats(self):
+        """Get cache statistics"""
+        total_users = len(self.cache)
+        expired_count = 0
+
+        for user_id, (_, timestamp) in self.cache.items():
+            if datetime.now() - timestamp > timedelta(seconds=self.ttl_seconds):
+                expired_count += 1
+
+        return {
+            "total_cached_users": total_users,
+            "expired_entries": expired_count,
+            "active_entries": total_users - expired_count
+        }
+
+
+# Initialize global cache instance
+tools_cache = ToolsCache(ttl_minutes=5)
+
+# Helper function for parallel tool processing
+
+
+def process_tool_for_integration(tool):
+    """Process a single tool and return provider information"""
+    try:
+        if not tool.requirements or not tool.requirements.authorization:
+            return None
+
+        auth = tool.requirements.authorization
+
+        # Determine integration status
+        if auth.token_status == "completed" and auth.status == "active":
+            status = "connected"
+        elif auth.token_status == "pending":
+            status = "pending"
+        elif auth.token_status == "failed":
+            status = "failed"
+        else:
+            status = "not_connected"
+
+        # Get provider from tool authorization info (primary source)
+        provider_id = None
+        if auth.provider_type:
+            provider_id = auth.provider_type.lower()
+
+        # If we have oauth2, try to determine specific provider from tool name
+        if provider_id == "oauth2":
+            tool_name_lower = tool.name.lower()
+            # Smart provider mapping based on tool functionality
+            if any(keyword in tool_name_lower for keyword in ["gmail", "email", "thread", "draft"]):
+                provider_id = "gmail"
+            elif any(keyword in tool_name_lower for keyword in ["google", "spreadsheet", "document", "presentation"]):
+                provider_id = "google"
+            elif any(keyword in tool_name_lower for keyword in ["outlook", "microsoft", "onedrive"]):
+                provider_id = "microsoft"
+            elif any(keyword in tool_name_lower for keyword in ["slack"]):
+                provider_id = "slack"
+            elif any(keyword in tool_name_lower for keyword in ["notion"]):
+                provider_id = "notion"
+            elif any(keyword in tool_name_lower for keyword in ["pinterest"]):
+                provider_id = "pinterest"
+            elif any(keyword in tool_name_lower for keyword in ["asana", "task", "project", "tag"]):
+                provider_id = "asana"
+            elif any(keyword in tool_name_lower for keyword in ["confluence", "page", "space"]):
+                provider_id = "confluence"
+            elif any(keyword in tool_name_lower for keyword in ["dropbox", "file"]):
+                provider_id = "dropbox"
+            elif any(keyword in tool_name_lower for keyword in ["github", "repository", "issue", "pull"]):
+                provider_id = "github"
+            elif any(keyword in tool_name_lower for keyword in ["jira", "ticket"]):
+                provider_id = "jira"
+            elif any(keyword in tool_name_lower for keyword in ["linkedin", "company", "contact"]):
+                provider_id = "linkedin"
+            else:
+                # For unrecognized oauth2 tools, group by first word of tool name
+                provider_id = tool_name_lower.split('.')[0] if '.' in tool.name else tool_name_lower.split()[
+                    0] if ' ' in tool_name_lower else "other"
+
+        # Fallback if no provider found
+        if not provider_id:
+            provider_id = tool.name.lower().split(
+                '.')[0] if '.' in tool.name else "unknown"
+
+        return {
+            "provider_id": provider_id,
+            "status": status,
+            "tool_name": tool.name
+        }
+
+    except Exception as e:
+        print(f"Error processing tool {getattr(tool, 'name', 'unknown')}: {e}")
+        return None
+
+
+def process_tool_for_integration_fast(tool):
+    """Optimized version with faster processing and timeouts"""
+    try:
+        # Skip tools without authorization requirements immediately
+        if not hasattr(tool, 'requirements') or not tool.requirements or not tool.requirements.authorization:
+            return None
+
+        auth = tool.requirements.authorization
+
+        # Quick status determination without deep inspection
+        if hasattr(auth, 'token_status') and hasattr(auth, 'status'):
+            if auth.token_status == "completed" and auth.status == "active":
+                status = "connected"
+            elif auth.token_status == "pending":
+                status = "pending"
+            elif auth.token_status == "failed":
+                status = "failed"
+            else:
+                status = "not_connected"
+        else:
+            status = "not_connected"
+
+        # Fast provider identification with minimal string operations
+        provider_id = "other"
+        if hasattr(auth, 'provider_type') and auth.provider_type:
+            provider_type = auth.provider_type.lower()
+            if provider_type != "oauth2":
+                provider_id = provider_type
+            else:
+                # Quick provider mapping based on tool name
+                tool_name = tool.name.lower() if hasattr(tool, 'name') else ""
+                if "gmail" in tool_name or "email" in tool_name:
+                    provider_id = "gmail"
+                elif "google" in tool_name:
+                    provider_id = "google"
+                elif "microsoft" in tool_name or "outlook" in tool_name:
+                    provider_id = "microsoft"
+                elif "slack" in tool_name:
+                    provider_id = "slack"
+                elif "asana" in tool_name:
+                    provider_id = "asana"
+                elif "github" in tool_name:
+                    provider_id = "github"
+                elif "dropbox" in tool_name:
+                    provider_id = "dropbox"
+                elif "linkedin" in tool_name:
+                    provider_id = "linkedin"
+                elif "confluence" in tool_name:
+                    provider_id = "confluence"
+                # Add other quick matches here
+
+        return {
+            "provider_id": provider_id,
+            "status": status
+        }
+
+    except Exception:
+        # Return minimal default on any error
+        return {
+            "provider_id": "other",
+            "status": "not_connected"
+        }
+
+
+def get_default_integrations():
+    """Return default integrations when no tools are found"""
+    default_providers = [
+        "gmail", "google", "microsoft", "slack", "asana",
+        "github", "dropbox", "linkedin", "confluence", "other"
+    ]
+
+    integrations = []
+    for provider_id in default_providers:
+        metadata = INTEGRATION_METADATA.get(provider_id, {})
+        integration_item = V1IntegrationItem(
+            name=provider_id,
+            display_name=metadata.get("name", provider_id.title()),
+            logo=metadata.get(
+                "logo_url", "https://via.placeholder.com/64x64?text=?"),
+            status="not_connected",
+            provider=provider_id
+        )
+        integrations.append(integration_item)
+
+    return integrations
+
 
 # Integration metadata for v1 endpoint response formatting
 INTEGRATION_METADATA = {
@@ -28,7 +256,7 @@ INTEGRATION_METADATA = {
         "logo_url": "https://logoeps.com/wp-content/uploads/2013/03/microsoft-vector-logo.png"
     },
     "slack": {
-        "name": "Slack", 
+        "name": "Slack",
         "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Slack-Logo.png"
     },
     "notion": {
@@ -211,6 +439,12 @@ class CheckIntegrationsRequest(BaseModel):
     user_id: str
 
 
+class CacheStatsResponse(BaseModel):
+    success: bool
+    stats: Dict[str, Any]
+    message: str
+
+
 class IntegrationResponse(BaseModel):
     success: bool
     message: str
@@ -336,36 +570,36 @@ async def remove_integration(request: RemoveIntegrationRequest):
     try:
         # Get all tools for the user to find the specific integration
         tools = client.tools.list(user_id=request.user_id)
-        
+
         # Find the specific integration tool
         target_tool = None
         for tool in tools:
             if tool.name.lower() == request.integration_name.lower():
                 target_tool = tool
                 break
-        
+
         if not target_tool:
             return IntegrationResponse(
                 success=False,
                 message=f"Integration {request.integration_name} not found for user {request.user_id}",
                 status="not_found"
             )
-        
+
         # Check if the integration is actually authorized
         # According to Arcade docs: integration is connected when BOTH conditions are met:
         # 1. auth.status == "active" (auth mechanism is available)
         # 2. auth.token_status == "completed" (user completed OAuth flow)
-        if (not target_tool.requirements or 
-            not target_tool.requirements.authorization or 
+        if (not target_tool.requirements or
+            not target_tool.requirements.authorization or
             target_tool.requirements.authorization.token_status != "completed" or
-            target_tool.requirements.authorization.status != "active"):
-            
+                target_tool.requirements.authorization.status != "active"):
+
             auth_status = "inactive"
             token_status = "not_started"
             if target_tool.requirements and target_tool.requirements.authorization:
                 auth_status = target_tool.requirements.authorization.status
                 token_status = target_tool.requirements.authorization.token_status
-            
+
             return IntegrationResponse(
                 success=False,
                 message=f"Integration {request.integration_name} is not fully authorized for user {request.user_id}. Auth status: {auth_status}, Token status: {token_status}",
@@ -375,7 +609,7 @@ async def remove_integration(request: RemoveIntegrationRequest):
         # Get Arcade API key and engine URL
         arcade_api_key = os.getenv("ARCADE_API_KEY")
         engine_url = "https://api.arcade.dev"
-        
+
         if not arcade_api_key:
             return IntegrationResponse(
                 success=False,
@@ -393,8 +627,9 @@ async def remove_integration(request: RemoveIntegrationRequest):
             "Content-Type": "application/json"
         }
 
-        list_response = requests.get(list_url, params=list_params, headers=list_headers)
-        
+        list_response = requests.get(
+            list_url, params=list_params, headers=list_headers)
+
         if list_response.status_code != 200:
             return IntegrationResponse(
                 success=False,
@@ -403,19 +638,19 @@ async def remove_integration(request: RemoveIntegrationRequest):
             )
 
         connections = list_response.json().get("data", [])
-        
+
         # Step 2: Find the connection for this integration
         connection_to_remove = None
         for connection in connections:
             # Match by provider type or connection metadata
             provider_id = connection.get("provider", {}).get("id", "")
             # Check if this connection is related to the integration we want to remove
-            if (request.integration_name.lower() in provider_id.lower() or 
+            if (request.integration_name.lower() in provider_id.lower() or
                 provider_id.lower() in request.integration_name.lower() or
-                request.integration_name == "gmail" and "google" in provider_id.lower()):
+                    request.integration_name == "gmail" and "google" in provider_id.lower()):
                 connection_to_remove = connection
                 break
-        
+
         if not connection_to_remove:
             return IntegrationResponse(
                 success=False,
@@ -431,8 +666,11 @@ async def remove_integration(request: RemoveIntegrationRequest):
         }
 
         delete_response = requests.delete(delete_url, headers=delete_headers)
-        
+
         if delete_response.status_code == 204:
+            # Invalidate cache since integration status changed
+            tools_cache.invalidate(request.user_id)
+
             return IntegrationResponse(
                 success=True,
                 message=f"Integration {request.integration_name} successfully removed for user {request.user_id}",
@@ -455,94 +693,156 @@ async def remove_integration(request: RemoveIntegrationRequest):
         )
 
 
+def process_single_tool(tool):
+    """Process a single tool and extract integration data"""
+    try:
+        # Initialize default values
+        auth_status = "inactive"
+        token_status = "not_started"
+        requirements_met = False
+        provider_type = None
+        status_reason = None
+        secrets_info = []
+
+        # Check if requirements exist and are met
+        if tool.requirements:
+            requirements_met = tool.requirements.met
+
+            # Check authorization status
+            if tool.requirements.authorization:
+                auth = tool.requirements.authorization
+                auth_status = auth.status  # 'active' or 'inactive'
+                token_status = auth.token_status  # 'not_started', 'pending', 'completed', 'failed'
+                provider_type = auth.provider_type
+                if hasattr(auth, 'status_reason'):
+                    status_reason = auth.status_reason
+
+            # Check secret requirements
+            if tool.requirements.secrets:
+                for secret in tool.requirements.secrets:
+                    secret_info = {
+                        "key": secret.key,
+                        "met": secret.met
+                    }
+                    if hasattr(secret, 'status_reason') and secret.status_reason:
+                        secret_info["status_reason"] = secret.status_reason
+                    secrets_info.append(secret_info)
+
+        # Determine if tool is fully authorized
+        is_authorized = (
+            requirements_met and
+            auth_status == "active" and
+            token_status == "completed"
+        )
+
+        integration_data = {
+            "name": tool.name,
+            "description": getattr(tool, 'description', None),
+            "auth_status": auth_status,
+            "token_status": token_status,
+            "authorized": is_authorized,
+            "requirements_met": requirements_met,
+            "provider": provider_type or (tool.name.split('.')[0] if '.' in tool.name else tool.name)
+        }
+
+        # Add optional fields if they exist
+        if status_reason:
+            integration_data["status_reason"] = status_reason
+        if secrets_info:
+            integration_data["secrets"] = secrets_info
+
+        return integration_data
+
+    except Exception as tool_error:
+        # If checking a specific tool fails, return error data
+        print(f'Error checking status for {tool.name}: {tool_error}')
+        return {
+            "name": tool.name,
+            "auth_status": "error",
+            "token_status": "error",
+            "authorized": False,
+            "requirements_met": False,
+            "provider": tool.name.split('.')[0] if '.' in tool.name else tool.name,
+            "error": str(tool_error)
+        }
+
+
 @router.post("/check_integrations", response_model=IntegrationsListResponse)
 async def check_integrations(request: CheckIntegrationsRequest):
     """
-    Check all existing integrations for a user.
+    Check all existing integrations for a user using batch processing.
     Returns a list of authorized integrations and their status.
     """
     try:
-        # Get all tools for the user using the correct Arcade API
-        tools = client.tools.list(user_id=request.user_id)
+        start_time = time.time()
 
+        # Try to get tools from cache first
+        tools = tools_cache.get(request.user_id)
+
+        if tools is None:
+            # Cache miss - fetch from Arcade API
+            print(
+                f"Cache miss for user {request.user_id} - fetching from Arcade API")
+            tools_page = client.tools.list(user_id=request.user_id)
+
+            # Convert paginated result to list
+            tools = list(tools_page)
+
+            # Cache the results
+            tools_cache.set(request.user_id, tools)
+
+            fetch_time = time.time()
+            print(
+                f"Fetched {len(tools)} tools from API in {fetch_time - start_time:.2f}s")
+        else:
+            # Cache hit
+            fetch_time = time.time()
+            print(
+                f"Retrieved {len(tools)} tools from cache in {fetch_time - start_time:.4f}s")
+
+        # Process tools in parallel using ThreadPoolExecutor
         integrations = []
 
-        for tool in tools:
-            try:
-                # Initialize default values
-                auth_status = "inactive"
-                token_status = "not_started"
-                requirements_met = False
-                provider_type = None
-                status_reason = None
-                secrets_info = []
+        # Use ThreadPoolExecutor for I/O bound operations
+        max_workers = min(50, len(tools))  # Limit concurrent threads
 
-                # Check if requirements exist and are met
-                if tool.requirements:
-                    requirements_met = tool.requirements.met
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tool processing tasks
+            future_to_tool = {
+                executor.submit(process_single_tool, tool): tool
+                for tool in tools
+            }
 
-                    # Check authorization status
-                    if tool.requirements.authorization:
-                        auth = tool.requirements.authorization
-                        auth_status = auth.status  # 'active' or 'inactive'
-                        token_status = auth.token_status  # 'not_started', 'pending', 'completed', 'failed'
-                        provider_type = auth.provider_type
-                        if hasattr(auth, 'status_reason'):
-                            status_reason = auth.status_reason
+            # Collect results as they complete
+            for future in as_completed(future_to_tool):
+                tool = future_to_tool[future]
+                try:
+                    integration_data = future.result(
+                        timeout=5.0)  # 5 second timeout per tool
+                    integrations.append(integration_data)
+                except Exception as exc:
+                    print(f'Tool {tool.name} generated an exception: {exc}')
+                    # Add error entry for failed tool
+                    integrations.append({
+                        "name": tool.name,
+                        "auth_status": "error",
+                        "token_status": "error",
+                        "authorized": False,
+                        "requirements_met": False,
+                        "provider": tool.name.split('.')[0] if '.' in tool.name else tool.name,
+                        "error": f"Processing timeout or error: {str(exc)}"
+                    })
 
-                    # Check secret requirements
-                    if tool.requirements.secrets:
-                        for secret in tool.requirements.secrets:
-                            secret_info = {
-                                "key": secret.key,
-                                "met": secret.met
-                            }
-                            if hasattr(secret, 'status_reason') and secret.status_reason:
-                                secret_info["status_reason"] = secret.status_reason
-                            secrets_info.append(secret_info)
+        processing_time = time.time()
+        total_time = processing_time - start_time
 
-                # Determine if tool is fully authorized
-                is_authorized = (
-                    requirements_met and
-                    auth_status == "active" and
-                    token_status == "completed"
-                )
-
-                integration_data = {
-                    "name": tool.name,
-                    "description": getattr(tool, 'description', None),
-                    "auth_status": auth_status,
-                    "token_status": token_status,
-                    "authorized": is_authorized,
-                    "requirements_met": requirements_met,
-                    "provider": provider_type or (tool.name.split('.')[0] if '.' in tool.name else tool.name)
-                }
-
-                # Add optional fields if they exist
-                if status_reason:
-                    integration_data["status_reason"] = status_reason
-                if secrets_info:
-                    integration_data["secrets"] = secrets_info
-
-                integrations.append(integration_data)
-
-            except Exception as tool_error:
-                # If checking a specific tool fails, continue with others
-                print(f'Error checking status for {tool.name}: {tool_error}')
-                integrations.append({
-                    "name": tool.name,
-                    "auth_status": "error",
-                    "token_status": "error",
-                    "authorized": False,
-                    "requirements_met": False,
-                    "provider": tool.name.split('.')[0] if '.' in tool.name else tool.name,
-                    "error": str(tool_error)
-                })
+        print(
+            f"Processed {len(integrations)} integrations in {processing_time - fetch_time:.2f}s (Total: {total_time:.2f}s)")
 
         return IntegrationsListResponse(
             success=True,
             integrations=integrations,
-            message=f"Retrieved {len(integrations)} integration statuses for user {request.user_id}"
+            message=f"Retrieved {len(integrations)} integration statuses for user {request.user_id} in {total_time:.2f}s"
         )
 
     except Exception as e:
@@ -552,6 +852,47 @@ async def check_integrations(request: CheckIntegrationsRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to check integrations: {str(e)}"
+        )
+
+
+@router.get("/cache_stats", response_model=CacheStatsResponse)
+async def get_cache_stats():
+    """
+    Get statistics about the tools cache.
+    Useful for monitoring cache performance and debugging.
+    """
+    try:
+        stats = tools_cache.get_stats()
+        return CacheStatsResponse(
+            success=True,
+            stats=stats,
+            message=f"Cache stats retrieved successfully"
+        )
+    except Exception as e:
+        print(f'Error getting cache stats: {e}')
+        traceback.print_exc()
+        sentry_sdk.capture_exception(e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get cache stats: {str(e)}"
+        )
+
+
+@router.post("/clear_cache")
+async def clear_tools_cache():
+    """
+    Clear the entire tools cache. Use with caution.
+    """
+    try:
+        tools_cache.clear_all()
+        return {"success": True, "message": "Cache cleared successfully"}
+    except Exception as e:
+        print(f'Error clearing cache: {e}')
+        traceback.print_exc()
+        sentry_sdk.capture_exception(e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear cache: {str(e)}"
         )
 
 
@@ -733,96 +1074,106 @@ async def v1_check_integrations(request: CheckIntegrationsRequest):
     """
     V1 endpoint to check all integrations with standardized response format.
     Returns integrations with name, display_name, logo, status, and provider.
+    Optimized for sub-20 second response times.
     """
     try:
-        # Get all tools for the user
-        tools = client.tools.list(user_id=request.user_id)
+        start_time = time.time()
 
-        integrations = []
+        # Try to get tools from cache first
+        tools_list = tools_cache.get(request.user_id)
+
+        if tools_list is None:
+            # Cache miss - fetch from Arcade API
+            print(
+                f"V1 Cache miss for user {request.user_id} - fetching from Arcade API")
+            tools_page = client.tools.list(user_id=request.user_id)
+
+            # Convert paginated result to list
+            tools_list = list(tools_page)
+
+            # Cache the results
+            tools_cache.set(request.user_id, tools_list)
+
+            fetch_time = time.time()
+            print(
+                f"V1 Fetched {len(tools_list)} tools from API in {fetch_time - start_time:.2f}s")
+        else:
+            # Cache hit
+            fetch_time = time.time()
+            print(
+                f"V1 Retrieved {len(tools_list)} tools from cache in {fetch_time - start_time:.4f}s")
+
+        # Limit processing to first 50 tools for speed
+        tools_list = tools_list[:50]  # Limit for performance
+
+        if not tools_list:
+            # Return default providers if no tools found
+            return V1CheckIntegrationsResponse(
+                success=True,
+                integrations=get_default_integrations()
+            )
+
+        # Process tools in parallel with aggressive optimization
         provider_status = {}  # Track the best status for each provider
 
-        # Process each tool and map to our integration metadata
-        for tool in tools:
-            if tool.requirements and tool.requirements.authorization:
-                auth = tool.requirements.authorization
+        # Increase max workers for faster processing
+        max_workers = min(50, max(10, len(tools_list)))
 
-                # Determine integration status
-                if auth.token_status == "completed" and auth.status == "active":
-                    status = "connected"
-                elif auth.token_status == "pending":
-                    status = "pending"
-                elif auth.token_status == "failed":
-                    status = "failed"
-                else:
-                    status = "not_connected"
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tools for processing with timeout
+            future_to_tool = {
+                executor.submit(process_tool_for_integration_fast, tool): tool
+                for tool in tools_list
+            }
 
-                # Get provider from tool authorization info (primary source)
-                provider_id = None
-                if auth.provider_type:
-                    provider_id = auth.provider_type.lower()
-                
-                # Map common provider types to user-friendly names
-                provider_mapping = {
-                    "oauth2": "oauth2",  # Keep as is, will map to specific services below
-                    "google": "google",
-                    "microsoft": "microsoft", 
-                    "slack": "slack",
-                    "notion": "notion",
-                    "pinterest": "pinterest"
-                }
-                
-                # If we have oauth2, try to determine specific provider from tool name
-                if provider_id == "oauth2":
-                    tool_name_lower = tool.name.lower()
-                    # Smart provider mapping based on tool functionality
-                    if any(keyword in tool_name_lower for keyword in ["gmail", "email", "thread", "draft"]):
-                        provider_id = "gmail"
-                    elif any(keyword in tool_name_lower for keyword in ["google", "spreadsheet", "document", "presentation"]):
-                        provider_id = "google"
-                    elif any(keyword in tool_name_lower for keyword in ["outlook", "microsoft", "onedrive"]):
-                        provider_id = "microsoft"
-                    elif any(keyword in tool_name_lower for keyword in ["slack"]):
-                        provider_id = "slack"
-                    elif any(keyword in tool_name_lower for keyword in ["notion"]):
-                        provider_id = "notion"
-                    elif any(keyword in tool_name_lower for keyword in ["pinterest"]):
-                        provider_id = "pinterest"
-                    elif any(keyword in tool_name_lower for keyword in ["asana", "task", "project", "tag"]):
-                        provider_id = "asana"
-                    elif any(keyword in tool_name_lower for keyword in ["confluence", "page", "space"]):
-                        provider_id = "confluence"
-                    elif any(keyword in tool_name_lower for keyword in ["dropbox", "file"]):
-                        provider_id = "dropbox"
-                    elif any(keyword in tool_name_lower for keyword in ["github", "repository", "issue", "pull"]):
-                        provider_id = "github"
-                    elif any(keyword in tool_name_lower for keyword in ["jira", "ticket"]):
-                        provider_id = "jira"
-                    elif any(keyword in tool_name_lower for keyword in ["linkedin", "company", "contact"]):
-                        provider_id = "linkedin"
-                    else:
-                        # For unrecognized oauth2 tools, group by first word of tool name
-                        provider_id = tool_name_lower.split('.')[0] if '.' in tool.name else tool_name_lower.split()[0] if ' ' in tool_name_lower else "other"
-                
-                # Fallback if no provider found
-                if not provider_id:
-                    provider_id = tool.name.lower().split('.')[0] if '.' in tool.name else "unknown"
+            # Collect results with timeout to prevent hanging
+            completed_count = 0
+            max_wait_time = 15  # Maximum 15 seconds for all processing
+            start_time = time.time()
 
-                # Track the best status for each provider (connected > pending > failed > not_connected)
-                status_priority = {"connected": 4, "pending": 3, "failed": 2, "not_connected": 1}
-                current_priority = status_priority.get(status, 0)
-                
-                if provider_id not in provider_status or current_priority > provider_status[provider_id]["priority"]:
-                    provider_status[provider_id] = {
-                        "status": status,
-                        "priority": current_priority
-                    }
+            for future in as_completed(future_to_tool, timeout=max_wait_time):
+                if time.time() - start_time > max_wait_time:
+                    break  # Break if we're taking too long
+
+                try:
+                    # 2 second timeout per task
+                    result = future.result(timeout=2)
+                    if result is None:
+                        continue
+
+                    provider_id = result["provider_id"]
+                    status = result["status"]
+
+                    # Track the best status for each provider
+                    status_priority = {
+                        "connected": 4, "pending": 3, "failed": 2, "not_connected": 1}
+                    current_priority = status_priority.get(status, 0)
+
+                    if provider_id not in provider_status or current_priority > provider_status[provider_id]["priority"]:
+                        provider_status[provider_id] = {
+                            "status": status,
+                            "priority": current_priority
+                        }
+
+                    completed_count += 1
+                except (concurrent.futures.TimeoutError, Exception) as e:
+                    # Skip failed/slow tools
+                    continue
+
+        # Fill in missing providers with default not_connected status
+        all_providers = set(INTEGRATION_METADATA.keys())
+        found_providers = set(provider_status.keys())
+        missing_providers = all_providers - found_providers
+
+        for provider_id in missing_providers:
+            provider_status[provider_id] = {
+                "status": "not_connected", "priority": 1}
 
         # Create consolidated integration items from provider status
+        integrations = []
         for provider_id, status_info in provider_status.items():
-            # Get metadata from our integration metadata
             metadata = INTEGRATION_METADATA.get(provider_id, {})
 
-            # Create integration item with standardized format
             integration_item = V1IntegrationItem(
                 name=provider_id,
                 display_name=metadata.get("name", provider_id.title()),
@@ -831,7 +1182,6 @@ async def v1_check_integrations(request: CheckIntegrationsRequest):
                 status=status_info["status"],
                 provider=provider_id
             )
-
             integrations.append(integration_item)
 
         return V1CheckIntegrationsResponse(
