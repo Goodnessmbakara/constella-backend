@@ -25,6 +25,7 @@ client = Arcade()  # Automatically finds the `ARCADE_API_KEY` env variable
 
 # TTL Cache for tools list
 
+
 def get_base_url_from_request(request: Request) -> str:
     """
     Dynamically detect the base URL from the request.
@@ -32,16 +33,17 @@ def get_base_url_from_request(request: Request) -> str:
     """
     # Get the base URL from the request
     base_url = str(request.base_url).rstrip('/')
-    
+
     # If it's localhost with a port, keep it as is
     if 'localhost' in base_url or '127.0.0.1' in base_url:
         return base_url
-    
+
     # For production/ngrok URLs, ensure we have the protocol
     if not base_url.startswith('http'):
         base_url = f"https://{base_url}"
-    
+
     return base_url
+
 
 def build_logo_url(base_url: str, logo_filename: str) -> str:
     """
@@ -51,6 +53,7 @@ def build_logo_url(base_url: str, logo_filename: str) -> str:
     import urllib.parse
     encoded_filename = urllib.parse.quote(logo_filename)
     return f"{base_url}/static/logos/{encoded_filename}"
+
 
 # Integration metadata with relative paths (will be converted to full URLs at runtime)
 INTEGRATION_METADATA = {
@@ -84,19 +87,20 @@ INTEGRATION_METADATA = {
     }
 }
 
+
 def get_integration_metadata_with_urls(request: Request) -> Dict[str, Dict[str, str]]:
     """
     Get integration metadata with full logo URLs based on the current request.
     """
     base_url = get_base_url_from_request(request)
-    
+
     metadata_with_urls = {}
     for provider_id, metadata in INTEGRATION_METADATA.items():
         metadata_with_urls[provider_id] = {
             "name": metadata["name"],
             "logo_url": build_logo_url(base_url, metadata["logo_filename"])
         }
-    
+
     return metadata_with_urls
 
 
@@ -345,8 +349,135 @@ def process_tool_for_integration_fast(tool):
         }
 
 
+def get_database_integrations(user_id: str, request: Request):
+    """Get integration statuses from HorizonIntegration database"""
+    default_providers = [
+        "notion", "slack", "gmail", "outlook", "google-drive", "google-calendar", "pinterest"
+    ]
+
+    # Get dynamic metadata with full URLs based on current request
+    metadata_with_urls = get_integration_metadata_with_urls(request)
+
+    # Get user's integrations from HorizonIntegration database
+    user_integrations = HorizonIntegration.get_by_user_id(user_id)
+
+    integrations = []
+    for provider_id in default_providers:
+        metadata = metadata_with_urls.get(provider_id, {})
+        status = "not_connected"
+
+        # Check if user has this integration in database
+        if user_integrations:
+            # Look for any integration that maps to this provider
+            for integration_data in user_integrations:
+                integration_name = integration_data.get("integration_name", "")
+
+                # Map integration to provider using provider field or name mapping
+                if integration_data.get("provider") == provider_id:
+                    # Direct provider match
+                    status = integration_data.get("status", "not_connected")
+                    break
+                elif map_integration_name_to_provider(integration_name) == provider_id:
+                    # Name-based mapping
+                    status = integration_data.get("status", "not_connected")
+                    break
+
+        integration_item = V1IntegrationItem(
+            name=provider_id,
+            display_name=metadata.get("name", provider_id.title()),
+            logo=metadata.get(
+                "logo_url", "https://via.placeholder.com/64x64?text=?"),
+            status=status,
+            provider=provider_id
+        )
+        integrations.append(integration_item)
+
+    return integrations
+
+
+def map_integration_name_to_provider(integration_name: str) -> str:
+    """Map integration name to provider ID based on name patterns"""
+    integration_name_lower = integration_name.lower()
+
+    # Map integration names to provider IDs
+    if any(keyword in integration_name_lower for keyword in ["gmail", "email"]):
+        return "gmail"
+    elif any(keyword in integration_name_lower for keyword in ["google"]):
+        # Google.DirectAuth should map to gmail for Gmail integration
+        if "directauth" in integration_name_lower:
+            return "gmail"
+        elif any(keyword in integration_name_lower for keyword in ["drive"]):
+            return "google-drive"
+        elif any(keyword in integration_name_lower for keyword in ["calendar"]):
+            return "google-calendar"
+        else:
+            return "gmail"  # Default Google integrations to Gmail
+    elif any(keyword in integration_name_lower for keyword in ["outlook", "microsoft"]):
+        return "outlook"
+    elif any(keyword in integration_name_lower for keyword in ["notion"]):
+        return "notion"
+    elif any(keyword in integration_name_lower for keyword in ["slack"]):
+        return "slack"
+    elif any(keyword in integration_name_lower for keyword in ["pinterest"]):
+        return "pinterest"
+
+    return "unknown"
+
+
+def map_integration_to_provider(integration_name: str, arcade_data: dict) -> str:
+    """Map an integration name to our provider ID using the same logic as process_single_tool"""
+    provider_type = arcade_data.get("provider", "")
+
+    # Smart provider mapping based on integration name
+    if provider_type == "oauth2" or not provider_type:
+        integration_name_lower = integration_name.lower()
+        # Map to our specific integrations (same logic as process_single_tool)
+        if any(keyword in integration_name_lower for keyword in ["gmail", "email", "thread", "draft"]):
+            return "gmail"
+        elif any(keyword in integration_name_lower for keyword in ["google", "spreadsheet", "document", "presentation", "calendar"]):
+            if "calendar" in integration_name_lower:
+                return "google-calendar"
+            elif any(keyword in integration_name_lower for keyword in ["spreadsheet", "document", "presentation", "drive"]):
+                return "google-drive"
+            else:
+                return "google-drive"
+        elif any(keyword in integration_name_lower for keyword in ["outlook", "microsoft", "onedrive"]):
+            return "outlook"
+        elif any(keyword in integration_name_lower for keyword in ["slack"]):
+            return "slack"
+        elif any(keyword in integration_name_lower for keyword in ["notion"]):
+            return "notion"
+        elif any(keyword in integration_name_lower for keyword in ["pinterest"]):
+            return "pinterest"
+
+    return "unknown"
+
+
+def determine_integration_status(arcade_data: dict) -> str:
+    """Determine integration status from arcade data using the same logic as process_single_tool"""
+    requirements_met = arcade_data.get("requirements_met", False)
+    auth_status = arcade_data.get("auth_status", "inactive")
+    token_status = arcade_data.get("token_status", "not_started")
+
+    # Same logic as process_single_tool: is_authorized check
+    is_authorized = (
+        requirements_met and
+        auth_status == "active" and
+        token_status == "completed"
+    )
+
+    if is_authorized:
+        return "connected"
+    elif token_status == "pending":
+        return "pending"
+    elif token_status == "failed":
+        return "failed"
+    else:
+        return "not_connected"
+
+
 def get_default_integrations(request: Request):
-    """Return default integrations when no tools are found"""
+    """Return default integrations when no tools are found (fallback)"""
     default_providers = [
         "notion", "slack", "gmail", "outlook", "google-drive", "google-calendar", "pinterest"
     ]
@@ -429,6 +560,7 @@ async def create_direct_integration(request: CreateDirectIntegrationRequest):
     """
     Create a direct integration using Arcade's auth.start() method.
     This initiates authorization with a third-party provider and returns tokens directly.
+    NOW UPDATES HorizonIntegration database for consistency with check_integrations v1.
 
     Args:
         provider: The OAuth provider (e.g., "google", "microsoft", "slack")
@@ -447,11 +579,34 @@ async def create_direct_integration(request: CreateDirectIntegrationRequest):
             scopes=request.scopes
         )
 
+        # Map provider to our standard integration name format
+        integration_name = f"{request.provider.title()}.DirectAuth"
+
         if auth_response.status == "completed":
-            # Authorization already complete, return the token
+            # Authorization already complete, update database and return token
             token = None
             if hasattr(auth_response, 'context') and hasattr(auth_response.context, 'token'):
                 token = auth_response.context.token
+
+            # Update HorizonIntegration database
+            integration = HorizonIntegration(
+                user_id=request.user_id,
+                integration_name=integration_name,
+                provider=request.provider,
+                status="connected",
+                auth_status="active",
+                token_status="completed",
+                scopes=request.scopes,
+                metadata={
+                    "auth_method": "direct",
+                    "token": token,
+                    "arcade_status": auth_response.status
+                }
+            )
+            integration.save()
+
+            # Invalidate cache since integration status changed
+            tools_cache.invalidate(request.user_id)
 
             return DirectIntegrationResponse(
                 success=True,
@@ -461,7 +616,23 @@ async def create_direct_integration(request: CreateDirectIntegrationRequest):
                 token=token
             )
         else:
-            # Authorization needed, return URL for user to complete OAuth flow
+            # Authorization needed, create pending record and return URL
+            integration = HorizonIntegration(
+                user_id=request.user_id,
+                integration_name=integration_name,
+                provider=request.provider,
+                status="pending",
+                auth_status="inactive",
+                token_status="pending",
+                scopes=request.scopes,
+                metadata={
+                    "auth_method": "direct",
+                    "authorization_url": auth_response.url,
+                    "arcade_status": auth_response.status
+                }
+            )
+            integration.save()
+
             return DirectIntegrationResponse(
                 success=True,
                 message=f"Authorization required for {request.provider}. User must complete OAuth flow at the provided URL.",
@@ -523,13 +694,47 @@ async def remove_integration(request: RemoveIntegrationRequest):
     """
     Remove an existing integration for a user.
     This will revoke the authorization and update the database.
-    Database-centric approach for ultra-fast response times.
+    NOW HANDLES BOTH PROVIDER NAMES (gmail) AND INTEGRATION NAMES (Gmail.ListEmails).
     """
     try:
-        # Step 1: Check if integration exists in database
+        # Step 1: Find integration in database - handle both provider and integration names
+        db_integration = None
+        search_integration_name = request.integration_name
+
+        # First try direct lookup
         db_integration = HorizonIntegration.get_by_user_and_integration(
             request.user_id, request.integration_name
         )
+
+        # If not found and looks like a provider name, try to find by provider
+        if not db_integration and request.integration_name in ["gmail", "google", "slack", "notion", "outlook", "pinterest"]:
+            user_integrations = HorizonIntegration.get_by_user_id(
+                request.user_id)
+            for integration in user_integrations:
+                if integration.get("provider") == request.integration_name:
+                    db_integration = integration
+                    search_integration_name = integration.get(
+                        "integration_name")
+                    break
+
+        # If still not found, try mapping provider to integration name patterns
+        if not db_integration:
+            if request.integration_name == "gmail":
+                search_integration_name = "Google.DirectAuth"
+            elif request.integration_name == "google":
+                search_integration_name = "Google.DirectAuth"
+            elif request.integration_name == "slack":
+                search_integration_name = "Slack.DirectAuth"
+            elif request.integration_name == "notion":
+                search_integration_name = "Notion.DirectAuth"
+            elif request.integration_name == "outlook":
+                search_integration_name = "Microsoft.DirectAuth"
+            elif request.integration_name == "pinterest":
+                search_integration_name = "Pinterest.DirectAuth"
+
+            db_integration = HorizonIntegration.get_by_user_and_integration(
+                request.user_id, search_integration_name
+            )
 
         if not db_integration:
             return IntegrationResponse(
@@ -540,40 +745,95 @@ async def remove_integration(request: RemoveIntegrationRequest):
 
         # Step 2: Check if integration is currently connected
         current_status = db_integration.get("status", "not_connected")
-        if current_status != "connected":
+        if current_status not in ["connected", "pending"]:
             return IntegrationResponse(
                 success=False,
                 message=f"Integration {request.integration_name} is not connected (current status: {current_status})",
                 status=current_status
             )
 
-        # Step 3: Attempt to revoke from Arcade API (if connection ID available)
-        arcade_connection_id = db_integration.get("arcade_connection_id")
+        # Step 3: Attempt to revoke from Arcade API using proper methods
         arcade_revoked = False
+        provider = db_integration.get("provider", "")
+        auth_method = db_integration.get("metadata", {}).get("auth_method", "")
 
-        if arcade_connection_id:
-            # Try to revoke from Arcade API
-            arcade_api_key = os.getenv("ARCADE_API_KEY")
-            if arcade_api_key:
+        try:
+            if auth_method == "direct" and provider:
+                # For direct auth, try to revoke using auth.revoke if available
                 try:
-                    engine_url = "https://api.arcade.dev"
-                    delete_url = f"{engine_url}/v1/admin/user_connections/{arcade_connection_id}"
-                    delete_headers = {
-                        "Authorization": f"Bearer {arcade_api_key}"}
+                    # Try Arcade's auth revoke method (may not be available for all providers)
+                    client.auth.revoke(
+                        user_id=request.user_id,
+                        provider=provider
+                    )
+                    arcade_revoked = True
+                    print(f"Successfully revoked direct auth for {provider}")
+                except Exception as direct_revoke_error:
+                    print(f"Direct auth revoke failed: {direct_revoke_error}")
+                    # Fall back to connection ID method if available
 
-                    delete_response = requests.delete(
-                        delete_url, headers=delete_headers)
-                    arcade_revoked = delete_response.status_code == 204
+            # Alternative: Try using connection ID method from GitHub discussion
+            arcade_connection_id = db_integration.get("arcade_connection_id")
+            if not arcade_revoked and arcade_connection_id:
+                arcade_api_key = os.getenv("ARCADE_API_KEY")
+                if arcade_api_key:
+                    try:
+                        engine_url = "https://api.arcade.dev"
+                        delete_url = f"{engine_url}/v1/admin/user_connections/{arcade_connection_id}"
+                        delete_headers = {
+                            "Authorization": f"Bearer {arcade_api_key}"}
 
-                    if not arcade_revoked:
-                        print(
-                            f"Warning: Failed to revoke from Arcade API: {delete_response.text}")
+                        delete_response = requests.delete(
+                            delete_url, headers=delete_headers)
+                        arcade_revoked = delete_response.status_code == 204
+
+                        if arcade_revoked:
+                            print(
+                                f"Successfully revoked via connection ID: {arcade_connection_id}")
+                        else:
+                            print(
+                                f"Warning: Failed to revoke from Arcade API: {delete_response.text}")
+                    except Exception as e:
+                        print(f"Warning: Error revoking from Arcade API: {e}")
+
+            # Final fallback: List and delete user connections
+            if not arcade_revoked:
+                try:
+                    arcade_api_key = os.getenv("ARCADE_API_KEY")
+                    if arcade_api_key:
+                        engine_url = "https://api.arcade.dev"
+                        list_url = f"{engine_url}/v1/admin/user_connections"
+                        headers = {"Authorization": f"Bearer {arcade_api_key}"}
+
+                        # List connections for user
+                        list_response = requests.get(
+                            list_url,
+                            headers=headers,
+                            params={"user.id": request.user_id}
+                        )
+
+                        if list_response.status_code == 200:
+                            connections = list_response.json().get("data", [])
+                            for connection in connections:
+                                if connection.get("provider", {}).get("id") == provider:
+                                    connection_id = connection.get("id")
+                                    delete_url = f"{engine_url}/v1/admin/user_connections/{connection_id}"
+                                    delete_response = requests.delete(
+                                        delete_url, headers=headers)
+                                    if delete_response.status_code == 204:
+                                        arcade_revoked = True
+                                        print(
+                                            f"Successfully revoked connection: {connection_id}")
+                                        break
                 except Exception as e:
-                    print(f"Warning: Error revoking from Arcade API: {e}")
+                    print(f"Warning: Error with fallback revocation: {e}")
+
+        except Exception as e:
+            print(f"Warning: Error during Arcade revocation: {e}")
 
         # Step 4: Update database - mark as removed (this is the source of truth now)
         success = HorizonIntegration.remove_integration(
-            request.user_id, request.integration_name)
+            request.user_id, search_integration_name)
 
         if success:
             # Invalidate cache since integration status changed
@@ -680,7 +940,8 @@ def process_single_tool(tool):
 
         # Only include tools that map to our specific integrations
         # Check if provider_id is one of our supported integrations
-        supported_providers = ["notion", "slack", "gmail", "outlook", "google-drive", "google-calendar", "pinterest"]
+        supported_providers = ["notion", "slack", "gmail",
+                               "outlook", "google-drive", "google-calendar", "pinterest"]
         if provider_id and provider_id in supported_providers:
             integration_data = {
                 "name": tool.name,
@@ -851,8 +1112,12 @@ async def wait_for_direct_authorization(request: CreateDirectIntegrationRequest)
     """
     Wait for direct authorization completion after user has been redirected to OAuth flow.
     This endpoint waits for the authorization to complete and returns the token.
+    NOW UPDATES HorizonIntegration database when authorization completes.
     """
     try:
+        # Map provider to our standard integration name format
+        integration_name = f"{request.provider.title()}.DirectAuth"
+
         # Start the authorization process to get the auth response
         auth_response = client.auth.start(
             user_id=request.user_id,
@@ -861,10 +1126,27 @@ async def wait_for_direct_authorization(request: CreateDirectIntegrationRequest)
         )
 
         if auth_response.status == "completed":
-            # Already completed, extract token
+            # Already completed, extract token and update database
             token = None
             if hasattr(auth_response, 'context') and hasattr(auth_response.context, 'token'):
                 token = auth_response.context.token
+
+            # Update HorizonIntegration database to connected status
+            HorizonIntegration.update_status(
+                user_id=request.user_id,
+                integration_name=integration_name,
+                status="connected",
+                auth_status="active",
+                token_status="completed",
+                metadata={
+                    "auth_method": "direct",
+                    "token": token,
+                    "arcade_status": "completed"
+                }
+            )
+
+            # Invalidate cache since integration status changed
+            tools_cache.invalidate(request.user_id)
 
             return DirectIntegrationResponse(
                 success=True,
@@ -881,6 +1163,23 @@ async def wait_for_direct_authorization(request: CreateDirectIntegrationRequest)
         token = None
         if hasattr(completed_auth, 'context') and hasattr(completed_auth.context, 'token'):
             token = completed_auth.context.token
+
+        # Update HorizonIntegration database to connected status
+        HorizonIntegration.update_status(
+            user_id=request.user_id,
+            integration_name=integration_name,
+            status="connected",
+            auth_status="active",
+            token_status="completed",
+            metadata={
+                "auth_method": "direct",
+                "token": token,
+                "arcade_status": "completed"
+            }
+        )
+
+        # Invalidate cache since integration status changed
+        tools_cache.invalidate(request.user_id)
 
         return DirectIntegrationResponse(
             success=True,
@@ -1024,17 +1323,17 @@ async def v1_check_integrations(request: CheckIntegrationsRequest, http_request:
     """
     V1 endpoint to check all integrations with standardized response format.
     Returns integrations with name, display_name, logo, status, and provider.
-    Simplified to always return the 7 specific integrations we want.
+    Now reads actual integration statuses from the ConstellaIntegration database.
     """
     try:
         start_time = time.time()
 
-        # Always return our specific integrations regardless of database state
-        integrations = get_default_integrations(http_request)
+        # Get integrations from database with actual statuses
+        integrations = get_database_integrations(request.user_id, http_request)
 
         total_time = time.time() - start_time
         print(
-            f"V1 endpoint completed in {total_time:.4f}s with {len(integrations)} integrations")
+            f"V1 endpoint completed in {total_time:.4f}s with {len(integrations)} integrations (database-driven)")
 
         return V1CheckIntegrationsResponse(
             success=True,
@@ -1045,7 +1344,18 @@ async def v1_check_integrations(request: CheckIntegrationsRequest, http_request:
         print(f'Error in v1 check integrations: {e}')
         traceback.print_exc()
         sentry_sdk.capture_exception(e)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to check integrations: {str(e)}"
-        )
+
+        # Fallback to default integrations if database query fails
+        try:
+            print("Falling back to default integrations due to database error")
+            integrations = get_default_integrations(http_request)
+            return V1CheckIntegrationsResponse(
+                success=True,
+                integrations=integrations
+            )
+        except Exception as fallback_error:
+            print(f'Fallback also failed: {fallback_error}')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to check integrations: {str(e)}"
+            )
