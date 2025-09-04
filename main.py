@@ -1,4 +1,5 @@
-#from tester import migrate_all_tenants_to_milvus
+# from tester import migrate_all_tenants_to_milvus
+from fastapi.staticfiles import StaticFiles
 import json
 import requests
 from utils.notifs import initialize_firebase, send_ios_image_notification, send_notification
@@ -95,6 +96,9 @@ if not is_scheduler and not is_dev:
 
 
 app = FastAPI()
+
+# Mount static files for logos
+app.mount("/static/logos", StaticFiles(directory="db/provider_logos"), name="logos")
 
 
 @app.exception_handler(RequestValidationError)
