@@ -297,31 +297,31 @@ def get_default_integrations():
 INTEGRATION_METADATA = {
     "notion": {
         "name": "Notion",
-        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png"
+        "logo_url": "/static/logos/Notion Logomark.png"
     },
     "slack": {
         "name": "Slack",
-        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Slack_icon_2019.svg"
+        "logo_url": "/static/logos/Slack Logomark.png"
     },
     "gmail": {
         "name": "Gmail",
-        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/7/7e/Gmail_icon_%282020%29.svg"
+        "logo_url": "/static/logos/Gmail Logomark.png"
     },
     "outlook": {
         "name": "Microsoft Outlook",
-        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg"
+        "logo_url": "/static/logos/Microsoft Outlook Logomark.png"
     },
     "google-drive": {
         "name": "Google Drive",
-        "logo_url": "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/google/google-original.svg"
+        "logo_url": "/static/logos/Google Drive Logomark.png"
     },
     "google-calendar": {
         "name": "Google Calendar",
-        "logo_url": "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/google/google-original.svg"
+        "logo_url": "/static/logos/Google Calendar Logomark.png"
     },
     "pinterest": {
         "name": "Pinterest",
-        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/0/08/Pinterest-logo.png"
+        "logo_url": "/static/logos/Pinterest Logomark.png"
     }
 }
 

@@ -5,6 +5,7 @@ This bypasses the problematic milvus imports to test the core functionality.
 """
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from routers.horizon.integrations import router
 import uvicorn
 import os
@@ -13,6 +14,9 @@ import os
 os.environ.setdefault("ARCADE_API_KEY", "test_key")
 
 app = FastAPI(title="V1 Endpoint Test Server")
+
+# Mount static files for logos
+app.mount("/static/logos", StaticFiles(directory="db/provider_logos"), name="logos")
 
 # Include only the horizon integrations router
 app.include_router(router)
