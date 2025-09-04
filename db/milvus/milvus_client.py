@@ -202,12 +202,24 @@ class MilvusDBClient:
 		print(f"Collection load state: {load_state}")
 
 		
-# Initialize client
-client = MilvusDBClient(
-	cluster_endpoint=os.getenv("MILVUS_CLUSTER_ENDPOINT"),
-	token=os.getenv("MILVUS_CLUSTER_TOKEN"),
-	collection_name=collection_name
-)
-	
-# Create collection
-client.create_collection(drop_existing=False)
+# Initialize client lazily
+client = None
+
+def get_client():
+	"""Get the Milvus client, initializing it if necessary"""
+	global client
+	if client is None:
+		try:
+			client = MilvusDBClient(
+				cluster_endpoint=os.getenv("MILVUS_CLUSTER_ENDPOINT"),
+				token=os.getenv("MILVUS_CLUSTER_TOKEN"),
+				collection_name=collection_name
+			)
+			# Create collection
+			client.create_collection(drop_existing=False)
+			print("Milvus client initialized successfully")
+		except Exception as e:
+			print(f"Warning: Failed to initialize Milvus client: {e}")
+			print("Application will continue without Milvus functionality")
+			client = None
+	return client

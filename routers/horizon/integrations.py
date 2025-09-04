@@ -274,8 +274,7 @@ def process_tool_for_integration_fast(tool):
 def get_default_integrations():
     """Return default integrations when no tools are found"""
     default_providers = [
-        "gmail", "google", "microsoft", "slack", "asana",
-        "github", "dropbox", "linkedin", "confluence", "other"
+        "notion", "slack", "gmail", "outlook", "google-drive", "google-calendar", "pinterest"
     ]
 
     integrations = []
@@ -296,173 +295,33 @@ def get_default_integrations():
 
 # Integration metadata for v1 endpoint response formatting
 INTEGRATION_METADATA = {
-    "google": {
-        "name": "Google",
-        "logo_url": "https://developers.google.com/identity/images/g-logo.png"
-    },
-    "microsoft": {
-        "name": "Microsoft",
-        "logo_url": "https://logoeps.com/wp-content/uploads/2013/03/microsoft-vector-logo.png"
-    },
-    "slack": {
-        "name": "Slack",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Slack-Logo.png"
-    },
     "notion": {
         "name": "Notion",
         "logo_url": "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png"
     },
-    "pinterest": {
-        "name": "Pinterest",
-        "logo_url": "https://logoeps.com/wp-content/uploads/2013/03/pinterest-vector-logo.png"
-    },
-    "asana": {
-        "name": "Asana",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/02/Asana-Logo.png"
-    },
-    "attachfiletotask": {
-        "name": "Asana",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/02/Asana-Logo.png"
-    },
-    "createtag": {
-        "name": "Asana",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/02/Asana-Logo.png"
-    },
-    "createtask": {
-        "name": "Asana",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/02/Asana-Logo.png"
-    },
-    "confluence": {
-        "name": "Confluence",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/08/Confluence-Logo.png"
-    },
-    "createpage": {
-        "name": "Confluence",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/08/Confluence-Logo.png"
-    },
-    "dropbox": {
-        "name": "Dropbox",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/03/Dropbox-Logo.png"
-    },
-    "downloadfile": {
-        "name": "Dropbox",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/03/Dropbox-Logo.png"
-    },
-    "github": {
-        "name": "GitHub",
-        "logo_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
-    },
-    "countstargazers": {
-        "name": "GitHub",
-        "logo_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
-    },
-    "createissue": {
-        "name": "GitHub",
-        "logo_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+    "slack": {
+        "name": "Slack",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Slack_icon_2019.svg"
     },
     "gmail": {
         "name": "Gmail",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Gmail-Logo.png"
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/7/7e/Gmail_icon_%282020%29.svg"
     },
-    "getthread": {
-        "name": "Gmail",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Gmail-Logo.png"
+    "outlook": {
+        "name": "Microsoft Outlook",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/d/df/Microsoft_Office_Outlook_%282019%E2%80%93present%29.svg"
     },
-    "listemails": {
-        "name": "Gmail",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Gmail-Logo.png"
+    "google-drive": {
+        "name": "Google Drive",
+        "logo_url": "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/google/google-original.svg"
     },
-    "sendemail": {
-        "name": "Gmail",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Gmail-Logo.png"
+    "google-calendar": {
+        "name": "Google Calendar",
+        "logo_url": "https://cdn.jsdelivr.net/gh/devicons/devicon/icons/google/google-original.svg"
     },
-    "jira": {
-        "name": "Jira",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/08/Jira-Logo.png"
-    },
-    "addcommenttoissue": {
-        "name": "Jira",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/08/Jira-Logo.png"
-    },
-    "linkedin": {
-        "name": "LinkedIn",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/05/LinkedIn-Logo.png"
-    },
-    "getcompanydatabykeywords": {
-        "name": "LinkedIn",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/05/LinkedIn-Logo.png"
-    },
-    "trello": {
-        "name": "Trello",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/03/Trello-Logo.png"
-    },
-    "zoom": {
-        "name": "Zoom",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/12/Zoom-Logo.png"
-    },
-    "twitter": {
-        "name": "Twitter",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2023/08/X-Logo.png"
-    },
-    "facebook": {
-        "name": "Facebook",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/04/Facebook-Logo.png"
-    },
-    "instagram": {
-        "name": "Instagram",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2017/02/Instagram-Logo.png"
-    },
-    "shopify": {
-        "name": "Shopify",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Shopify-Logo.png"
-    },
-    "salesforce": {
-        "name": "Salesforce",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Salesforce-Logo.png"
-    },
-    "hubspot": {
-        "name": "HubSpot",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/HubSpot-Logo.png"
-    },
-    "mailchimp": {
-        "name": "Mailchimp",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/02/Mailchimp-Logo.png"
-    },
-    "discord": {
-        "name": "Discord",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/12/Discord-Logo.png"
-    },
-    "spotify": {
-        "name": "Spotify",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/06/Spotify-Logo.png"
-    },
-    "youtube": {
-        "name": "YouTube",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/04/YouTube-Logo.png"
-    },
-    "whatsapp": {
-        "name": "WhatsApp",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/05/WhatsApp-Logo.png"
-    },
-    "telegram": {
-        "name": "Telegram",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/06/Telegram-Logo.png"
-    },
-    "airtable": {
-        "name": "Airtable",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/03/Airtable-Logo.png"
-    },
-    "calendly": {
-        "name": "Calendly",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2021/02/Calendly-Logo.png"
-    },
-    "figma": {
-        "name": "Figma",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/12/Figma-Logo.png"
-    },
-    "canva": {
-        "name": "Canva",
-        "logo_url": "https://logos-world.net/wp-content/uploads/2020/11/Canva-Logo.png"
+    "pinterest": {
+        "name": "Pinterest",
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/0/08/Pinterest-logo.png"
     }
 }
 
@@ -741,15 +600,49 @@ def process_single_tool(tool):
             token_status == "completed"
         )
 
-        integration_data = {
-            "name": tool.name,
-            "description": getattr(tool, 'description', None),
-            "auth_status": auth_status,
-            "token_status": token_status,
-            "authorized": is_authorized,
-            "requirements_met": requirements_met,
-            "provider": provider_type or (tool.name.split('.')[0] if '.' in tool.name else tool.name)
-        }
+        # Map the tool to our specific integration providers
+        provider_id = provider_type or (tool.name.split(
+            '.')[0] if '.' in tool.name else tool.name)
+
+        # Smart provider mapping based on tool functionality
+        if provider_id == "oauth2":
+            tool_name_lower = tool.name.lower()
+            # Map to our specific integrations
+            if any(keyword in tool_name_lower for keyword in ["gmail", "email", "thread", "draft"]):
+                provider_id = "gmail"
+            elif any(keyword in tool_name_lower for keyword in ["google", "spreadsheet", "document", "presentation", "calendar"]):
+                if "calendar" in tool_name_lower:
+                    provider_id = "google-calendar"
+                elif any(keyword in tool_name_lower for keyword in ["spreadsheet", "document", "presentation", "drive"]):
+                    provider_id = "google-drive"
+                else:
+                    provider_id = "google-drive"
+            elif any(keyword in tool_name_lower for keyword in ["outlook", "microsoft", "onedrive"]):
+                provider_id = "outlook"
+            elif any(keyword in tool_name_lower for keyword in ["slack"]):
+                provider_id = "slack"
+            elif any(keyword in tool_name_lower for keyword in ["notion"]):
+                provider_id = "notion"
+            elif any(keyword in tool_name_lower for keyword in ["pinterest"]):
+                provider_id = "pinterest"
+            else:
+                # For unrecognized oauth2 tools, don't include them
+                provider_id = None
+
+        # Only include tools that map to our specific integrations
+        if provider_id and provider_id in INTEGRATION_METADATA:
+            integration_data = {
+                "name": tool.name,
+                "description": getattr(tool, 'description', None),
+                "auth_status": auth_status,
+                "token_status": token_status,
+                "authorized": is_authorized,
+                "requirements_met": requirements_met,
+                "provider": provider_id
+            }
+        else:
+            # Skip tools that don't map to our integrations
+            return None
 
         # Add optional fields if they exist
         if status_reason:
@@ -1080,70 +973,13 @@ async def v1_check_integrations(request: CheckIntegrationsRequest):
     """
     V1 endpoint to check all integrations with standardized response format.
     Returns integrations with name, display_name, logo, status, and provider.
-    Now reads from MongoDB for ultra-fast response times (<0.01s).
+    Simplified to always return the 7 specific integrations we want.
     """
     try:
         start_time = time.time()
 
-        # Get integrations from database (super fast!)
-        db_integrations = HorizonIntegration.get_by_user_id(request.user_id)
-
-        db_time = time.time()
-        print(
-            f"V1 Retrieved {len(db_integrations)} integrations from DB in {db_time - start_time:.4f}s")
-
-        if not db_integrations:
-            # If no integrations in DB, migrate from Arcade API first
-            print(
-                f"No integrations found in DB for user {request.user_id}, migrating from Arcade...")
-            await migrate_user_integrations_from_arcade(request.user_id)
-
-            # Try again after migration
-            db_integrations = HorizonIntegration.get_by_user_id(
-                request.user_id)
-
-            if not db_integrations:
-                # Still no integrations, return default providers
-                return V1CheckIntegrationsResponse(
-                    success=True,
-                    integrations=get_default_integrations()
-                )
-
-        # Convert database integrations to V1 response format
-        integrations = []
-        for db_integration in db_integrations:
-            # Get metadata for logo and display name
-            provider_id = db_integration.get("provider", "other")
-            metadata = INTEGRATION_METADATA.get(provider_id, {})
-
-            integration_item = V1IntegrationItem(
-                name=db_integration.get("integration_name", "unknown"),
-                display_name=db_integration.get(
-                    "display_name", metadata.get("name", provider_id.title())),
-                logo=db_integration.get("logo_url") or metadata.get(
-                    "logo_url", "https://via.placeholder.com/64x64?text=?"),
-                status=db_integration.get("status", "not_connected"),
-                provider=provider_id
-            )
-            integrations.append(integration_item)
-
-        # Add any missing default providers that aren't in the database yet
-        existing_providers = {
-            integration.provider for integration in integrations}
-        default_providers = set(INTEGRATION_METADATA.keys())
-        missing_providers = default_providers - existing_providers
-
-        for provider_id in missing_providers:
-            metadata = INTEGRATION_METADATA.get(provider_id, {})
-            integration_item = V1IntegrationItem(
-                name=provider_id,
-                display_name=metadata.get("name", provider_id.title()),
-                logo=metadata.get(
-                    "logo_url") or "https://via.placeholder.com/64x64?text=?",
-                status="not_connected",
-                provider=provider_id
-            )
-            integrations.append(integration_item)
+        # Always return our specific integrations regardless of database state
+        integrations = get_default_integrations()
 
         total_time = time.time() - start_time
         print(
