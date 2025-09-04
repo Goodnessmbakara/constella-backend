@@ -25,6 +25,80 @@ client = Arcade()  # Automatically finds the `ARCADE_API_KEY` env variable
 
 # TTL Cache for tools list
 
+def get_base_url_from_request(request: Request) -> str:
+    """
+    Dynamically detect the base URL from the request.
+    This handles localhost, production domains, and ngrok URLs.
+    """
+    # Get the base URL from the request
+    base_url = str(request.base_url).rstrip('/')
+    
+    # If it's localhost with a port, keep it as is
+    if 'localhost' in base_url or '127.0.0.1' in base_url:
+        return base_url
+    
+    # For production/ngrok URLs, ensure we have the protocol
+    if not base_url.startswith('http'):
+        base_url = f"https://{base_url}"
+    
+    return base_url
+
+def build_logo_url(base_url: str, logo_filename: str) -> str:
+    """
+    Build a full logo URL from base URL and filename.
+    Handles URL encoding for spaces and special characters.
+    """
+    import urllib.parse
+    encoded_filename = urllib.parse.quote(logo_filename)
+    return f"{base_url}/static/logos/{encoded_filename}"
+
+# Integration metadata with relative paths (will be converted to full URLs at runtime)
+INTEGRATION_METADATA = {
+    "notion": {
+        "name": "Notion",
+        "logo_filename": "Notion Logomark.png"
+    },
+    "slack": {
+        "name": "Slack",
+        "logo_filename": "Slack Logomark.png"
+    },
+    "gmail": {
+        "name": "Gmail",
+        "logo_filename": "Gmail Logomark.png"
+    },
+    "outlook": {
+        "name": "Microsoft Outlook",
+        "logo_filename": "Microsoft Outlook Logomark.png"
+    },
+    "google-drive": {
+        "name": "Google Drive",
+        "logo_filename": "Google Drive Logomark.png"
+    },
+    "google-calendar": {
+        "name": "Google Calendar",
+        "logo_filename": "Google Calendar Logomark.png"
+    },
+    "pinterest": {
+        "name": "Pinterest",
+        "logo_filename": "Pinterest Logomark.png"
+    }
+}
+
+def get_integration_metadata_with_urls(request: Request) -> Dict[str, Dict[str, str]]:
+    """
+    Get integration metadata with full logo URLs based on the current request.
+    """
+    base_url = get_base_url_from_request(request)
+    
+    metadata_with_urls = {}
+    for provider_id, metadata in INTEGRATION_METADATA.items():
+        metadata_with_urls[provider_id] = {
+            "name": metadata["name"],
+            "logo_url": build_logo_url(base_url, metadata["logo_filename"])
+        }
+    
+    return metadata_with_urls
+
 
 class ToolsCache:
     def __init__(self, ttl_minutes=5):
@@ -271,15 +345,18 @@ def process_tool_for_integration_fast(tool):
         }
 
 
-def get_default_integrations():
+def get_default_integrations(request: Request):
     """Return default integrations when no tools are found"""
     default_providers = [
         "notion", "slack", "gmail", "outlook", "google-drive", "google-calendar", "pinterest"
     ]
 
+    # Get dynamic metadata with full URLs based on current request
+    metadata_with_urls = get_integration_metadata_with_urls(request)
+
     integrations = []
     for provider_id in default_providers:
-        metadata = INTEGRATION_METADATA.get(provider_id, {})
+        metadata = metadata_with_urls.get(provider_id, {})
         integration_item = V1IntegrationItem(
             name=provider_id,
             display_name=metadata.get("name", provider_id.title()),
@@ -294,36 +371,8 @@ def get_default_integrations():
 
 
 # Integration metadata for v1 endpoint response formatting
-INTEGRATION_METADATA = {
-    "notion": {
-        "name": "Notion",
-        "logo_url": "http://localhost:8001/static/logos/Notion Logomark.png"
-    },
-    "slack": {
-        "name": "Slack",
-        "logo_url": "http://localhost:8001/static/logos/Slack Logomark.png"
-    },
-    "gmail": {
-        "name": "Gmail",
-        "logo_url": "http://localhost:8001/static/logos/Gmail Logomark.png"
-    },
-    "outlook": {
-        "name": "Microsoft Outlook",
-        "logo_url": "http://localhost:8001/static/logos/Microsoft Outlook Logomark.png"
-    },
-    "google-drive": {
-        "name": "Google Drive",
-        "logo_url": "http://localhost:8001/static/logos/Google Drive Logomark.png"
-    },
-    "google-calendar": {
-        "name": "Google Calendar",
-        "logo_url": "http://localhost:8001/static/logos/Google Calendar Logomark.png"
-    },
-    "pinterest": {
-        "name": "Pinterest",
-        "logo_url": "http://localhost:8001/static/logos/Pinterest Logomark.png"
-    }
-}
+# Note: This is now handled dynamically by get_integration_metadata_with_urls()
+# which builds full URLs based on the current request's base URL
 
 
 class CreateIntegrationRequest(BaseModel):
@@ -630,7 +679,9 @@ def process_single_tool(tool):
                 provider_id = None
 
         # Only include tools that map to our specific integrations
-        if provider_id and provider_id in INTEGRATION_METADATA:
+        # Check if provider_id is one of our supported integrations
+        supported_providers = ["notion", "slack", "gmail", "outlook", "google-drive", "google-calendar", "pinterest"]
+        if provider_id and provider_id in supported_providers:
             integration_data = {
                 "name": tool.name,
                 "description": getattr(tool, 'description', None),
@@ -969,7 +1020,7 @@ class V1CheckIntegrationsResponse(BaseModel):
 
 
 @router.post("/v1/check_integrations", response_model=V1CheckIntegrationsResponse)
-async def v1_check_integrations(request: CheckIntegrationsRequest):
+async def v1_check_integrations(request: CheckIntegrationsRequest, http_request: Request):
     """
     V1 endpoint to check all integrations with standardized response format.
     Returns integrations with name, display_name, logo, status, and provider.
@@ -979,7 +1030,7 @@ async def v1_check_integrations(request: CheckIntegrationsRequest):
         start_time = time.time()
 
         # Always return our specific integrations regardless of database state
-        integrations = get_default_integrations()
+        integrations = get_default_integrations(http_request)
 
         total_time = time.time() - start_time
         print(
