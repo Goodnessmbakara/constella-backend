@@ -309,7 +309,7 @@ INTEGRATION_METADATA = {
     },
     "outlook": {
         "name": "Microsoft Outlook",
-        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/d/df/Microsoft_Office_Outlook_%282019%E2%80%93present%29.svg"
+        "logo_url": "https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg"
     },
     "google-drive": {
         "name": "Google Drive",
