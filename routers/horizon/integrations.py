@@ -297,31 +297,31 @@ def get_default_integrations():
 INTEGRATION_METADATA = {
     "notion": {
         "name": "Notion",
-        "logo_url": "/static/logos/Notion Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Notion Logomark.png"
     },
     "slack": {
         "name": "Slack",
-        "logo_url": "/static/logos/Slack Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Slack Logomark.png"
     },
     "gmail": {
         "name": "Gmail",
-        "logo_url": "/static/logos/Gmail Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Gmail Logomark.png"
     },
     "outlook": {
         "name": "Microsoft Outlook",
-        "logo_url": "/static/logos/Microsoft Outlook Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Microsoft Outlook Logomark.png"
     },
     "google-drive": {
         "name": "Google Drive",
-        "logo_url": "/static/logos/Google Drive Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Google Drive Logomark.png"
     },
     "google-calendar": {
         "name": "Google Calendar",
-        "logo_url": "/static/logos/Google Calendar Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Google Calendar Logomark.png"
     },
     "pinterest": {
         "name": "Pinterest",
-        "logo_url": "/static/logos/Pinterest Logomark.png"
+        "logo_url": "http://localhost:8001/static/logos/Pinterest Logomark.png"
     }
 }
 
